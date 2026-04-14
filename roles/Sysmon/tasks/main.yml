@@ -1,0 +1,83 @@
+- name: Download Microsoft repo for Debian/Ubuntu
+  ansible.builtin.get_url:
+    url: https://packages.microsoft.com/config/{{ ansible_facts['distribution'] | lower }}/{{ ansible_facts['distribution_version'] if ansible_facts['distribution'] == 'Ubuntu' else ansible_facts['distribution_major_version'] }}/packages-microsoft-prod.deb
+    dest: /tmp/packages-microsoft-prod.deb
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Install Microsoft repo package for Debian/Ubuntu
+  ansible.builtin.apt:
+    deb: /tmp/packages-microsoft-prod.deb
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Download Microsoft repo package (RHEL/Fedora)
+  ansible.builtin.get_url:
+    url: https://packages.microsoft.com/config/{{ 'fedora' if ansible_facts['distribution'] == 'Fedora' else 'rhel' }}/{{ ansible_facts['distribution_major_version'] }}/packages-microsoft-prod.rpm
+    dest: /tmp/packages-microsoft-prod.rpm
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Import Microsoft GPG key
+  ansible.builtin.rpm_key:
+    key: https://packages.microsoft.com/keys/microsoft.asc
+    state: present
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Install Microsoft repo package (RHEL/Fedora)
+  ansible.builtin.package:
+    name: /tmp/packages-microsoft-prod.rpm
+    state: present
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Install Sysmon for Debian
+  ansible.builtin.apt:
+    name: sysmonforlinux
+    state: present
+    update_cache: yes
+  when: ansible_facts['os_family'] == "Debian"
+
+- name: Install Sysmon for RedHat
+  ansible.builtin.package:
+    name: sysmonforlinux
+    state: present
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Create sysmon config directory
+  ansible.builtin.file:
+    path: /etc/sysmon
+    state: directory
+    mode: '0755'
+
+- name: Create sysmon config file
+  ansible.builtin.copy:
+    dest: /etc/sysmon/config.xml
+    mode: '0644'
+    content: |
+      <Sysmon schemaversion="4.70">
+        <EventFiltering>
+          <RuleGroup name="" groupRelation="or">
+            <ProcessCreate onmatch="include">
+              <Rule groupRelation="or">
+                <Image condition="begin with">/</Image>
+              </Rule>
+            </ProcessCreate>
+          </RuleGroup>
+
+          <RuleGroup name="" groupRelation="or">
+            <NetworkConnect onmatch="include">
+              <Rule groupRelation="or">
+                <Image condition="begin with">/</Image>
+              </Rule>
+            </NetworkConnect>
+          </RuleGroup>
+        </EventFiltering>
+      </Sysmon>
+
+- name: Initialize Sysmon
+  ansible.builtin.command: sysmon -accepteula -i /etc/sysmon/config.xml
+  args:
+    creates: /opt/sysmon/sysmon
+
+- name: Enable and start Sysmon
+  ansible.builtin.systemd:
+    name: sysmon
+    enabled: true
+    state: started

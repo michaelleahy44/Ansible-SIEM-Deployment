@@ -1,0 +1,54 @@
+- name: Download Node Exporter
+  get_url:
+    url: https://github.com/prometheus/node_exporter/releases/download/v1.7.0/node_exporter-1.7.0.linux-amd64.tar.gz
+    dest: /tmp/node_exporter-1.7.0.linux-amd64.tar.gz
+
+- name: Extract node_exporter archive
+  ansible.builtin.unarchive:
+    src: /tmp/node_exporter-1.7.0.linux-amd64.tar.gz
+    dest: /tmp/
+    remote_src: true
+
+- name: Install node_exporter binary
+  ansible.builtin.copy:
+    src: /tmp/node_exporter-1.7.0.linux-amd64/node_exporter
+    dest: /usr/local/bin/node_exporter
+    remote_src: true
+    mode: '0755'
+
+- name: Setup Node Exporter service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/node_exporter.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Node Exporter
+      After=network.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/node_exporter
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd and start node_exporter
+  ansible.builtin.systemd:
+    name: node_exporter
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Remove extracted directory
+  ansible.builtin.file:
+    path: /tmp/node_exporter-1.7.0.linux-amd64
+    state: absent
+
+- name: Open node_exporter port on firewalld
+  ansible.posix.firewalld:
+    port: 9100/tcp
+    permanent: true
+    state: enabled
+    immediate: true
+  when: ansible_facts['os_family'] == 'RedHat'

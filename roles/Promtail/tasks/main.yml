@@ -1,0 +1,140 @@
+- name: Install unzip
+  ansible.builtin.package:
+    name: unzip
+    state: present
+
+- name: Install Promtail
+  ansible.builtin.get_url:
+    url: https://github.com/grafana/loki/releases/download/v2.9.3/promtail-linux-amd64.zip
+    dest: /tmp/promtail-linux-amd64.zip
+
+- name: Extract Promtail archive
+  ansible.builtin.unarchive:
+    src: /tmp/promtail-linux-amd64.zip
+    dest: /tmp/
+    remote_src: true
+
+- name: Install Promtail binary
+  ansible.builtin.copy:
+    src: /tmp/promtail-linux-amd64
+    dest: /usr/local/bin/promtail
+    remote_src: true
+    mode: '0755'
+
+- name: Create promtail directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /etc/promtail
+    - /var/lib/promtail
+
+- name: Create Promtail config file
+  ansible.builtin.copy:
+    dest: /etc/promtail/config.yml
+    mode: '0644'
+    content: |
+      server:
+        http_listen_port: 9080
+        grpc_listen_port: 0
+
+      positions:
+        filename: /var/lib/promtail/positions.yaml
+
+      clients:
+        - url: http://{{ hostvars['soc-server'].ansible_host }}:3100/loki/api/v1/push
+
+      scrape_configs:
+        - job_name: varlogs
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: varlogs
+                host: {{ inventory_hostname }}
+                __path__: /var/log/*.log
+
+        - job_name: syslog
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: syslog
+                host: {{ inventory_hostname }}
+                __path__: /var/log/syslog
+
+            - targets:
+                - localhost
+              labels:
+                job: syslog
+                host: {{ inventory_hostname }}
+                __path__: /var/log/messages
+
+        - job_name: auth
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: auth
+                host: {{ inventory_hostname }}
+                __path__: /var/log/auth.log
+
+            - targets:
+                - localhost
+              labels:
+                job: auth
+                host: {{ inventory_hostname }}
+                __path__: /var/log/secure
+
+        - job_name: falco
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: falco
+                host: {{ inventory_hostname }}
+                __path__: /var/log/falco/*.json
+
+        - job_name: auditd
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: auditd
+                host: {{ inventory_hostname }}
+                __path__: /var/log/audit/audit.log
+
+        - job_name: sysmon
+          journal:
+            matches: SYSLOG_IDENTIFIER=sysmon
+          relabel_configs:
+            - source_labels: [__journal__hostname]
+              target_label: host
+              replacement: {{ inventory_hostname }}
+            - target_label: job
+              replacement: sysmon
+
+- name: Create Promtail service file
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/promtail.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Promtail
+      After=network.target
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/config.yml
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd and start Promtail
+  ansible.builtin.systemd:
+    name: promtail
+    enabled: true
+    state: started
+    daemon_reload: true
